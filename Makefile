@@ -37,6 +37,9 @@ runc:
 
 all: runc recvtty
 
+rpm: 
+	./hack/rpm
+
 recvtty:
 	$(GO_BUILD) -o contrib/cmd/recvtty/recvtty ./contrib/cmd/recvtty
 
@@ -156,4 +159,4 @@ localcross:
 	test localtest unittest localunittest integration localintegration \
 	rootlessintegration localrootlessintegration shell install install-bash \
 	install-man clean cfmt shfmt shellcheck \
-	vendor verify-dependencies cross localcross
+	vendor verify-dependencies cross localcross rpm
