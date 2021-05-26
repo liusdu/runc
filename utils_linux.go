@@ -30,6 +30,7 @@ var errEmptyID = errors.New("container id cannot be empty")
 // loadFactory returns the configured factory instance for execing containers.
 func loadFactory(context *cli.Context) (libcontainer.Factory, error) {
 	root := context.GlobalString("root")
+	prefix := context.String("rootfs-prefix")
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -69,7 +70,7 @@ func loadFactory(context *cli.Context) (libcontainer.Factory, error) {
 		newgidmap = ""
 	}
 
-	return libcontainer.New(abs, cgroupManager, intelRdtManager,
+	return libcontainer.New(abs, prefix, cgroupManager, intelRdtManager,
 		libcontainer.CriuPath(context.GlobalString("criu")),
 		libcontainer.NewuidmapPath(newuidmap),
 		libcontainer.NewgidmapPath(newgidmap))

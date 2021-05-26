@@ -783,13 +783,18 @@ const descriptorsFilename = "descriptors.json"
 
 func (c *linuxContainer) addCriuDumpMount(req *criurpc.CriuReq, m *configs.Mount) {
 	mountDest := strings.TrimPrefix(m.Destination, c.config.Rootfs)
-	if dest, err := securejoin.SecureJoin(c.config.Rootfs, mountDest); err == nil {
-		mountDest = dest[len(c.config.Rootfs):]
+	realRootPath := filepath.Join(c.config.Prefix, c.config.Rootfs)
+	logrus.Debugf("mount->: dest %s, root: %s", m.Destination, realRootPath)
+	if dest, err := securejoin.SecureJoin(realRootPath, mountDest); err == nil {
+		mountDest = dest[len(realRootPath):]
+	} else {
+		logrus.Debugf("securejoin faield, err: %s", err)
 	}
 	extMnt := &criurpc.ExtMountMap{
 		Key: proto.String(mountDest),
 		Val: proto.String(mountDest),
 	}
+	logrus.Debugf("mount<-: dest %s", mountDest)
 	req.Opts.ExtMnt = append(req.Opts.ExtMnt, extMnt)
 }
 

@@ -183,7 +183,7 @@ func CriuPath(criupath string) func(*LinuxFactory) error {
 
 // New returns a linux based container factory based in the root directory and
 // configures the factory with the provided option funcs.
-func New(root string, options ...func(*LinuxFactory) error) (Factory, error) {
+func New(root, prefix string, options ...func(*LinuxFactory) error) (Factory, error) {
 	if root != "" {
 		if err := os.MkdirAll(root, 0o700); err != nil {
 			return nil, newGenericError(err, SystemError)
@@ -191,6 +191,7 @@ func New(root string, options ...func(*LinuxFactory) error) (Factory, error) {
 	}
 	l := &LinuxFactory{
 		Root:      root,
+		Prefix:    prefix,
 		InitPath:  "/proc/self/exe",
 		InitArgs:  []string{os.Args[0], "init"},
 		Validator: validate.New(),
@@ -212,6 +213,9 @@ func New(root string, options ...func(*LinuxFactory) error) (Factory, error) {
 type LinuxFactory struct {
 	// Root directory for the factory to store state.
 	Root string
+
+	// prefix of rootfs
+	Prefix string
 
 	// InitPath is the path for calling the init responsibilities for spawning
 	// a container.
@@ -304,6 +308,7 @@ func (l *LinuxFactory) Load(id string) (Container, error) {
 		processStartTime: state.InitProcessStartTime,
 		fds:              state.ExternalDescriptors,
 	}
+	state.Config.Prefix = l.Prefix
 	c := &linuxContainer{
 		initProcess:          r,
 		initProcessStartTime: state.InitProcessStartTime,
