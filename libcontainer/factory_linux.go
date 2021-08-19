@@ -308,6 +308,11 @@ func (l *LinuxFactory) Load(id string) (Container, error) {
 		processStartTime: state.InitProcessStartTime,
 		fds:              state.ExternalDescriptors,
 	}
+
+	conn, err := getUnixConnFromEnvs()
+	if err != nil {
+		return nil, err
+	}
 	state.Config.Prefix = l.Prefix
 	c := &linuxContainer{
 		initProcess:          r,
@@ -322,6 +327,7 @@ func (l *LinuxFactory) Load(id string) (Container, error) {
 		cgroupManager:        l.NewCgroupsManager(state.Config.Cgroups, state.CgroupPaths),
 		root:                 containerRoot,
 		created:              state.Created,
+		notifyConn:           conn,
 	}
 	if l.NewIntelRdtManager != nil {
 		c.intelRdtManager = l.NewIntelRdtManager(&state.Config, id, state.IntelRdtPath)

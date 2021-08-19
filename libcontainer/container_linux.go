@@ -38,6 +38,19 @@ import (
 
 const stdioFdCount = 3
 
+const (
+	unixSocketKey = "runc-transport-server"
+)
+
+type HookStage struct {
+	Stage string `json: "stage,omitempty"`
+}
+
+type HookResult struct {
+	Msg     string `json: "msg,omitempty"`
+	Success bool   `json:"success,omitempty"`
+}
+
 type linuxContainer struct {
 	id                   string
 	root                 string
@@ -56,6 +69,7 @@ type linuxContainer struct {
 	state                containerState
 	created              time.Time
 	fifo                 *os.File
+	notifyConn           *net.UnixConn
 }
 
 // State represents a running container's state
@@ -1716,6 +1730,102 @@ func unlockNetwork(config *configs.Config) error {
 	return nil
 }
 
+func getUnixConnFromEnvs() (*net.UnixConn, error) {
+	v := os.Getenv(unixSocketKey)
+	if v == "" {
+		logrus.Debugf("No notify socket fd provide")
+		return nil, nil
+	}
+
+	fd, err := strconv.Atoi(v)
+	if err != nil {
+		logrus.Infof("Notify socket fd is invalid: %s, err: %s", v, err)
+		return nil, fmt.Errorf("Notify socket fd is invalid: %s, eer: %s", v, err)
+	}
+	runcServer := os.NewFile(uintptr(fd), "runc-transport-server")
+	if runcServer == nil {
+		logrus.Infof("Notify socket filee is invalid: %s, err: %s", v, err)
+		return nil, fmt.Errorf("Notify socket file is invalid: %s, eer: %s", v, err)
+	}
+	runcServerFileCon, err := net.FileConn(runcServer)
+	runcServer.Close()
+	if err != nil {
+		logrus.Infof("Notify socket conn is invalid: %s, err: %s", v, err)
+		return nil, fmt.Errorf("Notify socket conn is invalid: %s, eer: %s", v, err)
+	}
+	runcServerCon := runcServerFileCon.(*net.UnixConn)
+	return runcServerCon, nil
+	//defer runcServerCon.Close()
+}
+
+func sendMsg(conn *net.UnixConn, stage string) error {
+	hookstage := HookStage{
+		Stage: stage,
+	}
+	data, err := json.Marshal(&hookstage)
+	if err != nil {
+		fmt.Printf("unmarshal msg, err: %s\n", err)
+		return fmt.Errorf("unmarshal msg, err: %s", err)
+	}
+	_, err = conn.Write(data)
+
+	if err != nil {
+		fmt.Printf("send msg, err: %s\n", err)
+		return fmt.Errorf("send msg, err: %s", err)
+	}
+	return nil
+}
+func receiveMsg(conn *net.UnixConn) (*HookResult, error) {
+	buf := make([]byte, 10*4096)
+	oob := make([]byte, 4096)
+	resp := HookResult{}
+
+	n, oobn, _, _, err := conn.ReadMsgUnix(buf, oob)
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, errors.New("unexpected EOF")
+	}
+	if n == len(buf) {
+		return nil, errors.New("buffer is too small")
+	}
+
+	logrus.Debugf("n: %d, oobn: %d\n", n, oobn)
+	err = json.Unmarshal(buf[:n], &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func executeHook(conn *net.UnixConn, stage string) error {
+	err := sendMsg(conn, stage)
+	if err != nil {
+		return fmt.Errorf("failed to send msg, stage: %s, err: %s", stage, err)
+	}
+
+	res, err := receiveMsg(conn)
+	if err != nil {
+		return fmt.Errorf("failed to receive msg, stage: %s, err: %s", stage, err)
+	}
+
+	if !res.Success {
+		return fmt.Errorf("failed to exectute hook, stage: %s, msg: %s", stage, res.Msg)
+	}
+
+	if stage == "post-dump" {
+		err = sendMsg(conn, "hook-finished")
+		if err != nil {
+			return fmt.Errorf("failed to send msg, stage: %s, err: %s", stage, err)
+		}
+		//TODO: should we close conn here
+	}
+
+	return nil
+
+}
+
 func (c *linuxContainer) criuNotifications(resp *criurpc.CriuResp, process *Process, cmd *exec.Cmd, opts *CriuOpts, fds []string, oob []byte) error {
 	notify := resp.GetNotify()
 	if notify == nil {
@@ -1730,6 +1840,12 @@ func (c *linuxContainer) criuNotifications(resp *criurpc.CriuResp, process *Proc
 			return err
 		}
 		f.Close()
+		if c.notifyConn != nil {
+			err = executeHook(c.notifyConn, script)
+			if err != nil {
+				return fmt.Errorf("failed to notify caller")
+			}
+		}
 	case "network-unlock":
 		if err := unlockNetwork(c.config); err != nil {
 			return err
